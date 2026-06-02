@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="dark_overlay">#80000000</color>
+    <color name="accent_red">#FFE53935</color>
+    <color name="accent_green">#FF4CAF50</color>
+    <color name="accent_yellow">#FFFFEB3B</color>
+    <color name="grid_line">#B3FFFFFF</color>
+    <color name="level_good">#FF4CAF50</color>
+    <color name="level_bad">#FFE53935</color>
+    <color name="peaking">#80FF0000</color>
+</resources>
