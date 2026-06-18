@@ -347,7 +347,7 @@ fun AnnotationScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .graphicsLayer(scaleX = scale, scaleY = scale, translationX = offsetX, translationY = offsetY)
-                        .pointerInput(tool, showAnnotations, showStickers) {
+                        .pointerInput(tool) {
                             val pts = mutableListOf<Pair<Float, Float>>()
                             var pinching: Boolean
                             var lastDist: Float
@@ -481,7 +481,7 @@ fun AnnotationScreen(
                     }
                     if (tool == "eraser") { drawCircle(Color.White.copy(0.3f), sw * 3f, epos); drawCircle(Color.White.copy(0.5f), sw * 3f, epos, style = Stroke(2f)) }
                     // Status label
-                    val statusText = when { showStickers -> "스티커"; !showAnnotations -> "스케치 꺼짐"; else -> when (tool) { "arrow" -> "화살표"; "circle" -> "원"; "rect" -> "사각"; "pen" -> "펜"; else -> "지우개" } }
+                    val statusText = when { showStickers && showAnnotations -> "스티커 + 그리기"; showStickers -> "스티커 모드"; !showAnnotations -> when { tool == "eraser" -> "지우개"; else -> "이동 모드" }; else -> when (tool) { "arrow" -> "화살표"; "circle" -> "원"; "rect" -> "사각"; "pen" -> "펜"; else -> "지우개" } }
                     val sp = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.argb(200, 255, 255, 255); textSize = (h * 0.035f).coerceIn(14f, 24f); isAntiAlias = true; typeface = android.graphics.Typeface.DEFAULT_BOLD }
                     val sbg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.argb(120, 0, 0, 0); style = Paint.Style.FILL }
                     val tw = sp.measureText(statusText)
