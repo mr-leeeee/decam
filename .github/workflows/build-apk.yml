@@ -6,6 +6,20 @@ on:
   pull_request:
     branches: [ main ]
   workflow_dispatch:
+    inputs:
+      build-type:
+        description: 'Build type'
+        required: true
+        default: 'debug'
+        type: choice
+        options:
+          - debug
+          - release
+      version:
+        description: 'Version name (e.g. v1.1)'
+        required: false
+        default: ''
+        type: string
 
 jobs:
   build:
@@ -25,11 +39,32 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Build Debug APK
-        run: ./gradlew assembleDebug
+      - name: Build APK
+        run: |
+          if [ "${{ github.event.inputs.build-type || 'debug' }}" = "release" ]; then
+            ./gradlew assembleRelease
+          else
+            ./gradlew assembleDebug
+          fi
+
+      - name: Rename APK
+        run: |
+          VER="${{ github.event.inputs.version || '' }}"
+          TYPE="${{ github.event.inputs.build-type || 'debug' }}"
+          if [ -f app/build/outputs/apk/debug/app-debug.apk ]; then
+            SRC="app/build/outputs/apk/debug/app-debug.apk"
+            DST="decam-${TYPE}${VER:+-${VER}}.apk"
+          elif [ -f app/build/outputs/apk/release/app-release-unsigned.apk ]; then
+            SRC="app/build/outputs/apk/release/app-release-unsigned.apk"
+            DST="decam-${TYPE}${VER:+-${VER}}-unsigned.apk"
+          else
+            echo "No APK found"; exit 1
+          fi
+          cp "$SRC" "$DST"
+          echo "APK_PATH=$DST" >> $GITHUB_ENV
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: decam-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: decam-apk
+          path: decam-*.apk
