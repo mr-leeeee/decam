@@ -114,8 +114,11 @@ fun AnnotationScreen(
     }
 
     fun bmp(w: Int, h: Int) {
-        if (overlay == null || overlay!!.width != w || overlay!!.height != h)
+        if (overlay == null || overlay!!.width != w || overlay!!.height != h) {
+            val old = overlay
             overlay = Bitmap.createBitmap(maxOf(w, 1), maxOf(h, 1), Bitmap.Config.ARGB_8888)
+            if (old != null) android.graphics.Canvas(overlay!!).drawBitmap(old, 0f, 0f, null)
+        }
     }
 
     fun saveToGallery(bmp: Bitmap) {
