@@ -48,6 +48,14 @@ import java.io.File
 import kotlin.math.*
 
 data class DrawPath(val tool: String, val points: List<Pair<Float, Float>>)
+data class Sticker(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val text: String,
+    val x: Float, val y: Float,
+    val scale: Float = 1f,
+    val rotation: Float = 0f,
+    val color: Int = android.graphics.Color.RED
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -93,6 +101,13 @@ fun AnnotationScreen(
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
     var showHelp by remember { mutableStateOf(false) }
+    var showStickers by remember { mutableStateOf(false) }
+    var stickers by remember { mutableStateOf(listOf<Sticker>()) }
+    var selectedStickerId by remember { mutableStateOf<String?>(null) }
+    var showTextDialog by remember { mutableStateOf(false) }
+    var newStickerPos by remember { mutableStateOf(Offset.Zero) }
+    var stickerTextInput by remember { mutableStateOf("") }
+    var editStickerId by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(photoFile) {
         photo = withContext(Dispatchers.IO) { photoFile?.let { BitmapFactory.decodeFile(it.absolutePath) } }
@@ -158,6 +173,32 @@ fun AnnotationScreen(
         Canvas(c).drawLine(x1, y1, x2, y2, p); overlay = c
     }
 
+    fun hitTestSticker(pos: Offset): String? {
+        val tp = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 48f; typeface = android.graphics.Typeface.DEFAULT_BOLD }
+        for (s in stickers.reversed()) {
+            val tw = tp.measureText(s.text)
+            val hw = tw * s.scale * 0.5f + 16f; val hh = 48f * s.scale * 0.5f + 12f
+            val dx = pos.x - s.x; val dy = pos.y - s.y
+            val cos = cos(-s.rotation); val sin = sin(-s.rotation)
+            val rx = dx * cos - dy * sin; val ry = dx * sin + dy * cos
+            if (rx in -hw..hw && ry in -hh..hh) return s.id
+        }
+        return null
+    }
+
+    fun addSticker(text: String, pos: Offset) {
+        if (text.isBlank()) return
+        stickers = stickers + Sticker(text = text, x = pos.x, y = pos.y, scale = 2f, color = selectedColor)
+    }
+
+    fun eraseSticker(pos: Offset) {
+        stickers = stickers.filter { s ->
+            val dx = pos.x - s.x; val dy = pos.y - s.y
+            sqrt(dx * dx + dy * dy) > sw * 3f + 48f * s.scale * 0.5f
+        }
+        if (selectedStickerId != null && stickers.none { it.id == selectedStickerId }) selectedStickerId = null
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -165,16 +206,25 @@ fun AnnotationScreen(
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back", tint = Color.White) } },
                 actions = {
                     IconButton(onClick = { showAnnotations = !showAnnotations }) { Icon(if (showAnnotations) Icons.Default.Visibility else Icons.Default.VisibilityOff, "Sketch", tint = if (showAnnotations) Color(0xFFFF3D00) else Color.Gray) }
+                    IconButton(onClick = { showStickers = !showStickers }) { Icon(if (showStickers) Icons.Default.TextFields else Icons.Default.TextFields, "Sticker", tint = if (showStickers) Color(0xFFFF3D00) else Color.Gray) }
                     IconButton(onClick = { if (hist.isNotEmpty()) { overlay = hist.removeAt(hist.size - 1); curPath = null } }) { Icon(Icons.Default.Undo, "Undo", tint = Color(0xFFFF3D00)) }
                     IconButton(onClick = {
                         photo?.let { src ->
                             val w = src.width; val h = src.height
                             val result = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
                             val c = Canvas(result); c.drawBitmap(src, 0f, 0f, null)
-                            overlay?.let { db ->
-                                val sc = max(w.toFloat() / db.width, h.toFloat() / db.height)
-                                val dw = (db.width * sc).toInt(); val dh = (db.height * sc).toInt(); val ox = (w - dw) / 2f; val oy = (h - dh) / 2f
-                                c.drawBitmap(db, android.graphics.Rect(0, 0, db.width, db.height), android.graphics.Rect(ox.toInt(), oy.toInt(), ox.toInt() + dw, oy.toInt() + dh), null)
+                            val ov = overlay
+                            val cw = ov?.width ?: cs.width; val ch = ov?.height ?: cs.height
+                            val sc2 = max(w.toFloat() / maxOf(cw, 1), h.toFloat() / maxOf(ch, 1))
+                            val dw2 = (cw * sc2).toInt(); val dh2 = (ch * sc2).toInt(); val ox2 = (w - dw2) / 2f; val oy2 = (h - dh2) / 2f
+                            ov?.let { db ->
+                                c.drawBitmap(db, android.graphics.Rect(0, 0, db.width, db.height), android.graphics.Rect(ox2.toInt(), oy2.toInt(), ox2.toInt() + dw2, oy2.toInt() + dh2), null)
+                            }
+                            val stp = Paint(Paint.ANTI_ALIAS_FLAG).apply { isAntiAlias = true; typeface = android.graphics.Typeface.DEFAULT_BOLD }
+                            stickers.forEach { s ->
+                                stp.color = s.color; val ts = 48f * s.scale * sc2; stp.textSize = ts; val tw = stp.measureText(s.text)
+                                c.save(); c.translate(ox2 + s.x * sc2, oy2 + s.y * sc2); c.rotate(Math.toDegrees(s.rotation.toDouble()).toFloat())
+                                c.drawText(s.text, -tw / 2f, ts * 0.35f, stp); c.restore()
                             }
                             saveToGallery(result)
                             photoRepo.saveAnnotatedPhoto(result, photoFile!!, DefectType.SCRATCH) { onSaved() }
@@ -220,6 +270,74 @@ fun AnnotationScreen(
                         Box(Modifier.size(if (isSel) 22.dp else 18.dp).clip(RoundedCornerShape(50)).background(Color(c)).border(if (isSel) 2.dp else 0.dp, Color.White, RoundedCornerShape(50)).clickable { selectedColor = c }.padding(0.dp))
                     }
                 }
+                if (showStickers) {
+                    Spacer(Modifier.height(4.dp))
+                    Divider(color = Color.Gray.copy(0.3f), thickness = 0.5.dp)
+                    Spacer(Modifier.height(4.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        val presets = listOf("불량", "스크래치", "미도금", "이물", "기포", "변색")
+                        presets.forEach { label ->
+                            val isSelected = stickers.any { it.text == label }
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(if (isSelected) Color(0xFFFF3D00).copy(0.3f) else Color.Gray.copy(0.2f))
+                                    .clickable {
+                                        val cx = cs.width / 2f; val cy = cs.height / 2f
+                                        stickers = stickers + Sticker(text = label, x = cx, y = cy, scale = 2f, color = selectedColor)
+                                    }
+                                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                            ) { Text(label, color = if (isSelected) Color(0xFFFF3D00) else Color.White, fontSize = 12.sp) }
+                        }
+                    }
+                }
+                val selSticker = remember(selectedStickerId, stickers) { stickers.find { it.id == selectedStickerId } }
+                if (selSticker != null) {
+                    Spacer(Modifier.height(4.dp))
+                    Divider(color = Color.Gray.copy(0.3f), thickness = 0.5.dp)
+                    Spacer(Modifier.height(4.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Default.ZoomIn, "크기", tint = Color(0xFFFF3D00), modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        val curScale = selSticker.scale
+                        Slider(value = curScale, onValueChange = { v ->
+                            stickers = stickers.map { if (it.id == selectedStickerId) it.copy(scale = v) else it }
+                        }, valueRange = 0.3f..5f, steps = 46, modifier = Modifier.weight(1f).height(24.dp),
+                            colors = SliderDefaults.colors(thumbColor = Color(0xFFFF3D00), activeTrackColor = Color(0xFFFF3D00), inactiveTrackColor = Color.Gray.copy(alpha = 0.3f)))
+                        Text("%.1f".format(curScale), color = Color.White, fontSize = 10.sp, modifier = Modifier.width(24.dp))
+                    }
+                    Spacer(Modifier.height(2.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Default.RotateRight, "회전", tint = Color(0xFFFF3D00), modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        val curRot = Math.toDegrees(selSticker.rotation.toDouble()).toFloat()
+                        Slider(value = curRot, onValueChange = { v ->
+                            stickers = stickers.map { if (it.id == selectedStickerId) it.copy(rotation = Math.toRadians(v.toDouble()).toFloat()) else it }
+                        }, valueRange = 0f..360f, steps = 71, modifier = Modifier.weight(1f).height(24.dp),
+                            colors = SliderDefaults.colors(thumbColor = Color(0xFFFF3D00), activeTrackColor = Color(0xFFFF3D00), inactiveTrackColor = Color.Gray.copy(alpha = 0.3f)))
+                        Text("%.0f°".format(curRot), color = Color.White, fontSize = 10.sp, modifier = Modifier.width(28.dp))
+                    }
+                    Spacer(Modifier.height(2.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                        TextButton(onClick = {
+                            val s = stickers.find { it.id == selectedStickerId } ?: return@TextButton
+                            stickerTextInput = s.text; editStickerId = s.id; showTextDialog = true
+                        }) {
+                            Icon(Icons.Default.Edit, null, tint = Color(0xFFFF3D00), modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("내용 수정", color = Color(0xFFFF3D00), fontSize = 12.sp)
+                        }
+                        Spacer(Modifier.width(16.dp))
+                        TextButton(onClick = {
+                            stickers = stickers.filter { it.id != selectedStickerId }
+                            selectedStickerId = null
+                        }) {
+                            Icon(Icons.Default.Delete, null, tint = Color.Red, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("삭제", color = Color.Red, fontSize = 12.sp)
+                        }
+                    }
+                }
             }
         }
     ) { padding ->
@@ -229,7 +347,7 @@ fun AnnotationScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .graphicsLayer(scaleX = scale, scaleY = scale, translationX = offsetX, translationY = offsetY)
-                        .pointerInput(tool, showAnnotations) {
+                        .pointerInput(tool, showAnnotations, showStickers) {
                             val pts = mutableListOf<Pair<Float, Float>>()
                             var pinching: Boolean
                             var lastDist: Float
@@ -239,11 +357,14 @@ fun AnnotationScreen(
                                 pinching = false; lastDist = 0f; pts.clear()
                                 var lastCentroid: Offset? = null
                                 var lastPan: Offset? = null
+                                var moved = false
                                 pts.add(down.position.x to down.position.y)
                                 bmp(cs.width, cs.height)
 
-                                if (showAnnotations) {
-                                    if (tool == "eraser") { epos = down.position; erase(down.position.x, down.position.y, sw * 3f) }
+                                if (showStickers) {
+                                    selectedStickerId = hitTestSticker(down.position)
+                                } else if (showAnnotations) {
+                                    if (tool == "eraser") { epos = down.position; erase(down.position.x, down.position.y, sw * 3f); eraseSticker(down.position) }
                                     else { curPath = DrawPath(tool = tool, points = pts.toList()) }
                                 }
 
@@ -258,10 +379,10 @@ fun AnnotationScreen(
                                                 changes.sumOf { it.position.y.toDouble() }.toFloat() / changes.size
                                             )
                                             val d = (changes[0].position - changes[1].position).getDistance()
+
                                             if (lastDist > 0f) {
                                                 val ratio = d / lastDist
                                                 val newS = (scale * ratio).coerceIn(1f, 10f)
-
                                                 val r2 = newS / scale
                                                 offsetX = centroid.x - r2 * (centroid.x - offsetX)
                                                 offsetY = centroid.y - r2 * (centroid.y - offsetY)
@@ -275,7 +396,13 @@ fun AnnotationScreen(
                                             lastCentroid = centroid
                                         } else if (!pinching) {
                                             val ch = changes.first()
-                                            if (showAnnotations) {
+                                            moved = true
+                                            if (showStickers && selectedStickerId != null) {
+                                                moved = true
+                                                val s = stickers.find { it.id == selectedStickerId } ?: continue
+                                                val delta = Offset(ch.position.x - pts.last().first, ch.position.y - pts.last().second)
+                                                stickers = stickers.map { if (it.id == selectedStickerId) it.copy(x = s.x + delta.x, y = s.y + delta.y) else it }
+                                            } else if (showAnnotations && !showStickers) {
                                                 pts.add(ch.position.x to ch.position.y)
                                                 if (tool == "eraser") {
                                                     epos = ch.position; val r = sw * 3f
@@ -290,17 +417,24 @@ fun AnnotationScreen(
                                                 }
                                                 lastPan = ch.position
                                             }
+                                            pts.add(ch.position.x to ch.position.y)
                                         }
                                         changes.forEach { c -> c.consume() }
                                     }
                                 } while (event.changes.any { c -> c.pressed })
 
-                                if (!pinching && showAnnotations) {
-                                    if (tool == "eraser") { pushUndo() }
-                                    else {
-                                        val cp = curPath
-                                        if (cp != null && cp.points.size >= 2) { pushUndo(); commitShape(cp.tool, cp.points); curPath = null }
-                                        else curPath = null
+                                if (!pinching) {
+                                    if (showStickers) {
+                                        if (!moved && selectedStickerId == null) {
+                                            newStickerPos = down.position; stickerTextInput = ""; showTextDialog = true
+                                        }
+                                    } else if (showAnnotations && !showStickers) {
+                                        if (tool == "eraser") { pushUndo() }
+                                        else {
+                                            val cp = curPath
+                                            if (cp != null && cp.points.size >= 2) { pushUndo(); commitShape(cp.tool, cp.points); curPath = null }
+                                            else curPath = null
+                                        }
                                     }
                                 }
                             }
@@ -312,6 +446,27 @@ fun AnnotationScreen(
                     val sc = max(sw2 / w, sh2 / h); val dw = (sw2 / sc).toInt(); val dh = (sh2 / sc).toInt(); val ox = (w - dw) / 2f; val oy = (h - dh) / 2f
                     drawContext.canvas.nativeCanvas.drawBitmap(src, android.graphics.Rect(0, 0, src.width, src.height), android.graphics.Rect(ox.toInt(), oy.toInt(), ox.toInt() + dw, oy.toInt() + dh), null)
                     overlay?.let { drawContext.canvas.nativeCanvas.drawBitmap(it, 0f, 0f, null) }
+
+                    // Draw stickers
+                    val stp = Paint(Paint.ANTI_ALIAS_FLAG).apply { isAntiAlias = true; typeface = android.graphics.Typeface.DEFAULT_BOLD }
+                    stickers.forEach { s ->
+                        val isSel = s.id == selectedStickerId
+                        stp.color = s.color; stp.textSize = 48f * s.scale
+                        val tw = stp.measureText(s.text)
+                        val nc = drawContext.canvas.nativeCanvas
+                        nc.save()
+                        nc.translate(s.x, s.y)
+                        nc.rotate(Math.toDegrees(s.rotation.toDouble()).toFloat())
+                        if (isSel) {
+                            val bh = 48f * s.scale
+                            val bp = Paint().apply { color = android.graphics.Color.argb(60, 255, 255, 255); style = Paint.Style.FILL }
+                            nc.drawRoundRect(-tw / 2f - 10f, -bh / 2f - 6f, tw / 2f + 10f, bh / 2f + 6f, 8f, 8f, bp)
+                            val bp2 = Paint().apply { color = android.graphics.Color.argb(200, 255, 255, 255); style = Paint.Style.STROKE; strokeWidth = 2f }
+                            nc.drawRoundRect(-tw / 2f - 10f, -bh / 2f - 6f, tw / 2f + 10f, bh / 2f + 6f, 8f, 8f, bp2)
+                        }
+                        nc.drawText(s.text, -tw / 2f, 48f * s.scale * 0.35f, stp)
+                        nc.restore()
+                    }
 
                     curPath?.let { cur ->
                         val cp = cur.points; if (cp.size >= 2) {
@@ -326,7 +481,7 @@ fun AnnotationScreen(
                     }
                     if (tool == "eraser") { drawCircle(Color.White.copy(0.3f), sw * 3f, epos); drawCircle(Color.White.copy(0.5f), sw * 3f, epos, style = Stroke(2f)) }
                     // Status label
-                    val statusText = if (!showAnnotations) "스케치 꺼짐" else when (tool) { "arrow" -> "화살표"; "circle" -> "원"; "rect" -> "사각"; "pen" -> "펜"; else -> "지우개" }
+                    val statusText = when { showStickers -> "스티커"; !showAnnotations -> "스케치 꺼짐"; else -> when (tool) { "arrow" -> "화살표"; "circle" -> "원"; "rect" -> "사각"; "pen" -> "펜"; else -> "지우개" } }
                     val sp = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.argb(200, 255, 255, 255); textSize = (h * 0.035f).coerceIn(14f, 24f); isAntiAlias = true; typeface = android.graphics.Typeface.DEFAULT_BOLD }
                     val sbg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.argb(120, 0, 0, 0); style = Paint.Style.FILL }
                     val tw = sp.measureText(statusText)
@@ -335,6 +490,33 @@ fun AnnotationScreen(
                     drawContext.canvas.nativeCanvas.drawText(statusText, 8f + pad, h - pad - 4f, sp)
                 }
             }
+        }
+
+        if (showTextDialog) {
+            val isEdit = editStickerId != null
+            AlertDialog(
+                onDismissRequest = { showTextDialog = false; editStickerId = null },
+                title = { Text(if (isEdit) "텍스트 수정" else "텍스트 입력", fontWeight = FontWeight.Bold) },
+                text = {
+                    OutlinedTextField(value = stickerTextInput, onValueChange = { stickerTextInput = it },
+                        singleLine = true, label = { Text("스티커 내용") },
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFFFF3D00), cursorColor = Color(0xFFFF3D00)))
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        if (isEdit) {
+                            stickers = stickers.map { if (it.id == editStickerId) it.copy(text = stickerTextInput) else it }
+                            editStickerId = null
+                        } else {
+                            addSticker(stickerTextInput, newStickerPos)
+                        }
+                        showTextDialog = false
+                    }) { Text(if (isEdit) "수정" else "추가") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showTextDialog = false; editStickerId = null }) { Text("취소") }
+                }
+            )
         }
 
         if (showHelp) {
