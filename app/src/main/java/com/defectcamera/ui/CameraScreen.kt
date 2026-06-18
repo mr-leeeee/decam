@@ -152,6 +152,12 @@ fun CameraScreen() {
         }
     }
 
+    LaunchedEffect(currentScreen) {
+        if (currentScreen == Screen.CAMERA) {
+            cameraController.resumePreview()
+        }
+    }
+
     DisposableEffect(Unit) {
         onDispose { cameraController.release() }
     }

@@ -257,11 +257,6 @@ class Camera2Controller(private val context: Context) {
 
         try {
             val device = cameraDevice ?: throw Exception("Camera not open")
-            val chars = cameraManager.getCameraCharacteristics(cameraId)
-            val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP) ?: throw Exception("No config")
-            val sizes = map.getOutputSizes(ImageFormat.JPEG)
-            val maxSize = sizes.maxByOrNull { it.width * it.height } ?: Size(4032, 3024)
-
             val captureBuilder = device.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE)
             captureBuilder.addTarget(imageReader!!.surface)
 
@@ -282,55 +277,63 @@ class Camera2Controller(private val context: Context) {
                 FlashMode.OFF -> captureBuilder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_OFF)
             }
 
+            val chars2 = cameraManager.getCameraCharacteristics(cameraId)
+            val maxZoom2 = chars2.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 1f
+            val ratio2 = currentZoom.coerceIn(1f, maxZoom2)
+            val rect2 = chars2.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
+            if (rect2 != null && ratio2 > 1f) {
+                val cw2 = (rect2.width() / ratio2).toInt()
+                val ch2 = (rect2.height() / ratio2).toInt()
+                val cx2 = ((rect2.width() - cw2) / 2).toInt()
+                val cy2 = ((rect2.height() - ch2) / 2).toInt()
+                captureBuilder.set(CaptureRequest.SCALER_CROP_REGION, android.graphics.Rect(cx2, cy2, cx2 + cw2, cy2 + ch2))
+            }
+
             captureBuilder.set(CaptureRequest.JPEG_ORIENTATION, sensorOrientation)
             captureBuilder.set(CaptureRequest.JPEG_QUALITY, 100.toByte())
 
             val session = captureSession ?: throw Exception("No session")
-            session.stopRepeating()
-            session.capture(captureBuilder.build(), object : CameraCaptureSession.CaptureCallback() {
-                override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
-                    super.onCaptureCompleted(session, request, result)
-                }
-            }, cameraHandler)
+            session.capture(captureBuilder.build(), null, cameraHandler)
 
         } catch (e: Exception) {
             isTakingPhoto = false
+            captureCallback = null
+            resumePreview()
             onError(e.message ?: "Capture failed")
         }
     }
 
     private fun processImage(reader: ImageReader) {
-        val image = reader.acquireLatestImage() ?: return
-        val buffer = image.planes[0].buffer
-        val bytes = ByteArray(buffer.remaining())
-        buffer.get(bytes)
-
-        val dateStamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.KOREA).format(Date())
-        val dateStr = SimpleDateFormat("yyyyMMdd", Locale.KOREA).format(Date())
-        val folder = "DefectCamera/${dateStr}"
-        val dir = File(context.getExternalFilesDir(null), "Pictures/$folder")
-        dir.mkdirs()
-        val file = File(dir, "IMG_$dateStamp.jpg")
-
         try {
-            FileOutputStream(file).use { it.write(bytes) }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-
-        image.close()
-
-        stateLock.withLock {
-            isTakingPhoto = false
-        }
-
-        captureCallback?.invoke(file)
-        captureCallback = null
-
-        cameraHandler?.post {
+            val image = reader.acquireLatestImage() ?: return
             try {
-                captureSession?.setRepeatingRequest(previewBuilder?.build() ?: return@post, null, cameraHandler)
-            } catch (_: Exception) {}
+                val buffer = image.planes[0].buffer
+                val bytes = ByteArray(buffer.remaining())
+                buffer.get(bytes)
+
+                val dateStamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.KOREA).format(Date())
+                val dateStr = SimpleDateFormat("yyyyMMdd", Locale.KOREA).format(Date())
+                val folder = "DefectCamera/${dateStr}"
+                val dir = File(context.getExternalFilesDir(null), "Pictures/$folder")
+                dir.mkdirs()
+                val file = File(dir, "IMG_$dateStamp.jpg")
+
+                try {
+                    FileOutputStream(file).use { it.write(bytes) }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    captureCallback?.invoke(file)
+                    captureCallback = null
+                }
+            } finally {
+                image.close()
+            }
+        } finally {
+            stateLock.withLock { isTakingPhoto = false }
+            resumePreview()
         }
     }
 
@@ -339,6 +342,15 @@ class Camera2Controller(private val context: Context) {
         cameraHandler = Handler(cameraHandlerThread!!.looper)
         backgroundThread = HandlerThread("BackgroundThread").also { it.start() }
         backgroundHandler = Handler(backgroundThread!!.looper)
+    }
+
+    fun resumePreview() {
+        cameraHandler?.post {
+            try {
+                val pb = previewBuilder ?: return@post
+                captureSession?.setRepeatingRequest(pb.build(), null, cameraHandler)
+            } catch (_: Exception) {}
+        }
     }
 
     fun release() {
