@@ -30,7 +30,7 @@ class PhotoRepository(private val context: Context) {
         val file = File(dir, fileName)
 
         FileOutputStream(file).use { stream ->
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 100, stream)
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 85, stream)
         }
 
         onSaved(
@@ -45,8 +45,10 @@ class PhotoRepository(private val context: Context) {
     fun getLatestPhoto(): File? {
         val base = File(context.getExternalFilesDir(null), "Pictures/DefectCamera")
         if (!base.exists()) return null
-        return base.listFiles()
-            ?.flatMap { it.listFiles()?.toList() ?: emptyList() }
-            ?.maxByOrNull { it.lastModified() }
+
+        return base.walkTopDown()
+            .filter { it.isFile }
+            .maxByOrNull { it.lastModified() }
     }
 }
+

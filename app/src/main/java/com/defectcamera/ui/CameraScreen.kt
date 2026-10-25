@@ -31,12 +31,16 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.defectcamera.camera.Camera2Controller
 import com.defectcamera.camera.FlashMode
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 enum class Screen { CAMERA, ANNOTATION }
 
 @Composable
 fun CameraScreen() {
     val context = LocalContext.current
+    val ioScope = rememberCoroutineScope()
     var currentScreen by remember { mutableStateOf(Screen.CAMERA) }
     var lastPhotoFile by remember { mutableStateOf<File?>(null) }
     var cameraReady by remember { mutableStateOf(false) }
@@ -49,27 +53,31 @@ fun CameraScreen() {
     var zoom by remember { mutableFloatStateOf(1f) }
 
     fun saveToGallery(file: File) {
-        try {
-            val values = ContentValues().apply {
-                put(MediaStore.Images.Media.DISPLAY_NAME, file.name)
-                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    put(MediaStore.Images.Media.IS_PENDING, 1)
-                    put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/DefectCamera")
-                }
+        ioScope.launch {
+            withContext(Dispatchers.IO) {
+                try {
+                    val values = ContentValues().apply {
+                        put(MediaStore.Images.Media.DISPLAY_NAME, file.name)
+                        put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            put(MediaStore.Images.Media.IS_PENDING, 1)
+                            put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/DefectCamera")
+                        }
+                    }
+                    val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                    uri?.let {
+                        context.contentResolver.openOutputStream(it)?.use { out ->
+                            file.inputStream().use { inp -> inp.copyTo(out) }
+                        }
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            values.clear()
+                            values.put(MediaStore.Images.Media.IS_PENDING, 0)
+                            context.contentResolver.update(it, values, null, null)
+                        }
+                    }
+                } catch (_: Exception) {}
             }
-            val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-            uri?.let {
-                context.contentResolver.openOutputStream(it)?.use { out ->
-                    file.inputStream().use { inp -> inp.copyTo(out) }
-                }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    values.clear()
-                    values.put(MediaStore.Images.Media.IS_PENDING, 0)
-                    context.contentResolver.update(it, values, null, null)
-                }
-            }
-        } catch (_: Exception) {}
+        }
     }
 
     Box(Modifier.fillMaxSize()) {
@@ -162,3 +170,4 @@ fun CameraScreen() {
         onDispose { cameraController.release() }
     }
 }
+

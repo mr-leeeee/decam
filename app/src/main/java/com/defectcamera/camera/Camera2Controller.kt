@@ -66,6 +66,7 @@ class Camera2Controller(private val context: Context) {
 
     private val stateLock = ReentrantLock()
     private var isTakingPhoto = false
+    private val previewRebuildRunnable = Runnable { rebuildPreviewNow() }
 
     fun startCamera(surfaceTexture: SurfaceTexture, onReady: () -> Unit) {
         startBackgroundThreads()
@@ -147,12 +148,12 @@ class Camera2Controller(private val context: Context) {
 
     fun setZoom(ratio: Float) {
         currentZoom = ratio
-        rebuildPreview()
+        schedulePreviewRebuild()
     }
 
     fun setEv(ev: Float) {
         currentEv = ev
-        rebuildPreview()
+        schedulePreviewRebuild()
     }
 
     fun setIso(iso: Int) {
@@ -172,10 +173,16 @@ class Camera2Controller(private val context: Context) {
     }
 
     private fun applyManualParams() {
-        rebuildPreview()
+        schedulePreviewRebuild()
     }
 
-    private fun rebuildPreview() {
+    private fun schedulePreviewRebuild() {
+        val handler = cameraHandler ?: return
+        handler.removeCallbacks(previewRebuildRunnable)
+        handler.postDelayed(previewRebuildRunnable, 50L)
+    }
+
+    private fun rebuildPreviewNow() {
         val device = cameraDevice ?: return
         try {
             val pb = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
@@ -225,15 +232,19 @@ class Camera2Controller(private val context: Context) {
         }
     }
 
+    fun rebuildPreview() {
+        schedulePreviewRebuild()
+    }
+
     fun toggleManualFocus() {
         isManualFocus = !isManualFocus
-        rebuildPreview()
+        schedulePreviewRebuild()
     }
 
     fun setManualFocus(distance: Float) {
         if (isManualFocus) {
             manualFocusDistance = distance
-            rebuildPreview()
+            schedulePreviewRebuild()
         }
     }
 
@@ -243,7 +254,7 @@ class Camera2Controller(private val context: Context) {
             FlashMode.ON -> FlashMode.ALWAYS
             FlashMode.ALWAYS -> FlashMode.OFF
         }
-        rebuildPreview()
+        schedulePreviewRebuild()
     }
 
     fun takePhoto(
@@ -290,7 +301,7 @@ class Camera2Controller(private val context: Context) {
             }
 
             captureBuilder.set(CaptureRequest.JPEG_ORIENTATION, sensorOrientation)
-            captureBuilder.set(CaptureRequest.JPEG_QUALITY, 100.toByte())
+            captureBuilder.set(CaptureRequest.JPEG_QUALITY, 85.toByte())
 
             val session = captureSession ?: throw Exception("No session")
             session.capture(captureBuilder.build(), null, cameraHandler)
@@ -319,7 +330,9 @@ class Camera2Controller(private val context: Context) {
                 val file = File(dir, "IMG_$dateStamp.jpg")
 
                 try {
-                    FileOutputStream(file).use { it.write(bytes) }
+                    FileOutputStream(file).use { stream ->
+                        stream.write(bytes)
+                    }
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }
@@ -361,3 +374,4 @@ class Camera2Controller(private val context: Context) {
         backgroundThread?.quitSafely()
     }
 }
+
